@@ -2,8 +2,8 @@
 
 import requests
 from requests.exceptions import *
-from time import sleep	
-	
+from time import sleep
+
 # Exception classes
 class InstagramException(Exception):
 	pass
@@ -11,13 +11,13 @@ class InstagramException(Exception):
 class InternetException(InstagramException):
 	def __init__(self, e):
 		self.error=e
-	
+
 	def __getattr__(self, name):
 		return self.error.__getattribute__(name)
-	
+
 	def __str__(self):
 		return "Error by connection with Instagram to '{0}' with response code '{1}'".format(self.error.request.url, self.error.response.status_code)
-	
+
 class AuthException(Exception):
 	def __init__(self, login):
 		super().__init__("Cannot auth user with username '{0}'".format(login))
@@ -37,31 +37,31 @@ class ExceptionTree:
 			'action': lambda exception, *args, **kwargs: (args, kwargs),
 			'branch': {},
 		}
-	
+
 	def __getitem__(self, key):
 		# Check data
 		if not issubclass(key, Exception):
 			raise TypeError("Key must be Exception type")
 		return self.__search__(key)['action']
-	
+
 	def __setitem__(self, key, value):
 		# Check data
 		if not issubclass(key, Exception):
 			raise TypeError("Key must be Exception type")
 		if not callable(value):
 			raise TypeError("Value must be function")
-		
+
 		item, exists=self.__search__(key, False)
 		if exists:
 			item['action']=value
 		else:
 			item['branch'][key]={'branch': {}, 'action': value}
-	
+
 	def __search__(self, exception, get=True):
 		# Check data
 		if not issubclass(exception, Exception):
 			raise TypeError("'exception' must be Exception type")
-		
+
 		# Search
 		current=self.__tree__
 		while True:
@@ -86,10 +86,13 @@ class ElementConstructor(type):
 		fields["__str__"]=lambda self: str(self.__getattribute__(self.__primarykey__))
 		fields["__repr__"]=lambda self: str(self.__getattribute__(self.__primarykey__))
 		return type.__new__(cls, name, classes, fields)
-	
+
 	def __custom_del__(self):
-		del self.__cache__[self.__getattribute__(self.__primarykey__)]
-	
+		try:
+			del self.__cache__[self.__getattribute__(self.__primarykey__)]
+		except KeyError:
+			pass
+
 	def __call__(cls, key, *args, **kwargs):
 		if not key in cls.__cache__:
 			cls.__cache__[key]=super().__call__(key, *args, **kwargs)
@@ -97,9 +100,9 @@ class ElementConstructor(type):
 
 class Agent:
 	# Anonymous session
-	__session__=requests
+	__session__=requests.Session()
 	repeats=1
-	
+
 	def exceptionDecorator(func):
 		def wrapper(*args, **kwargs):
 			count=0
@@ -113,16 +116,16 @@ class Agent:
 					else:
 						raise e
 		return wrapper
-	
+
 	def __http_error_action__(exception, *args, **kwargs):
 		if exception.status_code in (403, 429):
 			sleep(2)
 			return (args, kwargs)
 		raise exception
-	
+
 	exception_actions=ExceptionTree()
 	exception_actions[HTTPError]=__http_error_action__
-	
+
 	@exceptionDecorator
 	def update(self, obj, settings={}):
 		# Checks and set data
@@ -138,16 +141,16 @@ class Agent:
 			query="https://www.instagram.com/explore/tags/{0}/?__a=1".format(obj.name)
 		else:
 			raise TypeError("obj must be Account, Media, Location or Tag")
-		
+
 		# Request
 		response=self.__send_get_request__(query, **settings)
-		
+
 		# Parsing info
 		try:
 			obj.__setDataFromJSON__(response.json())
 		except (ValueError, KeyError):
-			raise UnexpectedResponse(response.url, response.text)			
-	
+			raise UnexpectedResponse(response.url, response.text)
+
 	@exceptionDecorator
 	def getMedia(self, obj, count=12, settings={}):
 		# Checks data
@@ -169,7 +172,7 @@ class Agent:
 			data={'query_id': 17875800862117404, 'variables': '{"tag_name": "'+obj.name+'", "first": '+str(count)+'}'}
 		else:
 			raise TypeError("'obj' must be Account type")
-		
+
 		# Set data
 		if 'params' in settings:
 			settings['params'].update(data)
@@ -177,14 +180,14 @@ class Agent:
 			settings['params']=data
 		media_list=[]
 		stop=False
-		
+
 		while not stop:
 			# Send request
 			response=self.__send_get_request__(
 				"https://www.instagram.com/graphql/query/",
 				**settings,
 			)
-			
+
 			# Parsing info
 			try:
 				if isinstance(obj, Account):
@@ -227,7 +230,7 @@ class Agent:
 			except (ValueError, KeyError):
 				raise UnexpectedResponse(response.url, response.text)
 		return media_list
-	
+
 	@exceptionDecorator
 	def getLikes(self, media, count=20,	settings={}):
 		# Check data
@@ -237,7 +240,7 @@ class Agent:
 			raise TypeError("'count' must be int type")
 		if not isinstance(media, Media):
 			raise TypeError("'media' must be Media type")
-		
+
 		# Set data
 		data={'query_id': 17864450716183058, "variables": '{"shortcode": "'+media.code+'", "first": '+str(count)+'}'}
 		if 'params' in settings:
@@ -246,14 +249,14 @@ class Agent:
 			settings['params']=data
 		likes_list=[]
 		stop=False
-		
+
 		while not stop:
 			# Request for get info
 			response=self.__send_get_request__(
 				"https://www.instagram.com/graphql/query/",
 				**settings,
 			)
-		
+
 			# Parsing info
 			try:
 				data=response.json()['data']['shortcode_media']['edge_liked_by']
@@ -274,7 +277,7 @@ class Agent:
 			except (ValueError, KeyError):
 				raise UnexpectedResponse(response.url, response.text)
 		return likes_list
-	
+
 	@exceptionDecorator
 	def getComments(self, media, count=20, settings={}):
 		# Check data
@@ -284,7 +287,7 @@ class Agent:
 			raise TypeError("'count' must be int type")
 		if not isinstance(media, Media):
 			raise TypeError("'media' must be Media type")
-		
+
 		# Set data
 		data={'query_id': 17852405266163336, 'variables': '{"shortcode": "'+media.code+'", "first": '+str(count)+'}'}
 		if 'params' in settings:
@@ -293,14 +296,14 @@ class Agent:
 			settings['params']=data
 		comments_list=[]
 		stop=False
-		
+
 		while not stop:
 			# Request for get info
 			response=self.__send_get_request__(
 				"https://www.instagram.com/graphql/query/",
 				**settings,
 			)
-		
+
 			# Parsing info
 			try:
 				data=response.json()['data']['shortcode_media']['edge_media_to_comment']
@@ -337,7 +340,7 @@ class Agent:
 					args, kwargs=self.exception_actions[e.__class__](e, *args, **kwargs)
 				else:
 					raise InternetException(e)
-	
+
 	def __send_post_request__(self, *args, **kwargs):
 		count=0
 		while True:
@@ -351,12 +354,12 @@ class Agent:
 					args, kwargs=self.exception_actions[e.__class__](e, *args, **kwargs)
 				else:
 					raise InternetException(e)
-	
+
 # Account class
 class Account(metaclass=ElementConstructor):
 	__cache__=dict()
 	__primarykey__="login"
-	
+
 	def __init__(self, login):
 		self.id=None
 		self.login=login
@@ -394,7 +397,7 @@ class Account(metaclass=ElementConstructor):
 class AgentAccount(Account, Agent):
 	# Session for user
 	__session__=requests.Session()
-	
+
 	@Agent.exceptionDecorator
 	def __init__(self, login, password, settings={}):
 		super().__init__(login)
@@ -422,37 +425,37 @@ class AgentAccount(Account, Agent):
 			headers=headers,
 			**settings,
 		)
-		
+
 		# Parse response info
 		try:
 			data=response.json()
 			if not data['authenticated']:
-				raise AuthException(self.login) 
+				raise AuthException(self.login)
 		except (ValueError, KeyError):
 			raise UnexpectedResponse(response.url, response.text)
-	
+
 	def update(self, obj=None, settings={}):
 		if not obj:
 			obj=self
 		return super().update(obj, settings)
-	
+
 	def feed(self, count=12, settings={}):
 		# Check set and data
 		if not isinstance(settings, dict):
 			raise TypeError("'settings' must be dict type")
 		if not isinstance(count, int):
 			raise TypeError("'count' must be int type")
-		
+
 		# Set data
 		feed=[]
 		stop=False
-		
+
 		# Request for get info
 		response=self.__send_get_request__(
 			"https://www.instagram.com/?__a=1",
 			**settings,
 		)
-		
+
 		# Parsing info
 		try:
 			data=response.json()['graphql']['user']['edge_web_feed_timeline']
@@ -483,7 +486,7 @@ class AgentAccount(Account, Agent):
 				feed.append(media)
 		except (ValueError, KeyError):
 			raise UnexpectedResponse(response.url, response.text)
-		
+
 		# Set data
 		stop=(count<=len(feed))
 		count-=len(feed)
@@ -492,14 +495,14 @@ class AgentAccount(Account, Agent):
 			settings['params'].update(data)
 		else:
 			settings['params']=data
-		
+
 		while not stop:
 			# Request for get info
 			response=self.__send_get_request__(
 				"https://www.instagram.com/graphql/query/",
 				**settings,
 			)
-			
+
 			# Parsing info
 			try:
 				data=response.json()['data']['user']['edge_web_feed_timeline']
@@ -536,12 +539,12 @@ class AgentAccount(Account, Agent):
 			except (ValueError, KeyError):
 				raise UnexpectedResponse(response.url, response.text)
 		return feed
-	
+
 	def getMedia(self, obj=None, count=12, settings={}):
 		if not obj:
 			obj=self
 		return super().getMedia(obj, count,	settings)
-	
+
 	@Agent.exceptionDecorator
 	def getFollows(self, account=None, count=20, settings={}):
 		# Check set and data
@@ -555,7 +558,7 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'account' must be Account type")
 		if account.id==None:
 			raise NotUpdatedElement(account, 'id')
-			
+
 		# Set data
 		data={"query_id": 17874545323001329, 'variables': '{"id": '+str(account.id)+', "first": '+str(count)+'}'}
 		if 'params' in settings:
@@ -564,14 +567,14 @@ class AgentAccount(Account, Agent):
 			settings['params']=data
 		follows_list=[]
 		stop=False
-		
+
 		while not stop:
 			# Request for get info
 			response=self.__send_get_request__(
 				"https://www.instagram.com/graphql/query/",
 				**settings,
 			)
-		
+
 			# Parsing info
 			try:
 				data=response.json()['data']['user']['edge_follow']
@@ -593,7 +596,7 @@ class AgentAccount(Account, Agent):
 			except (ValueError, KeyError):
 				raise UnexpectedResponse(response.url, response.text)
 		return follows_list
-	
+
 	@Agent.exceptionDecorator
 	def getFollowers(self, account=None, count=20, settings={}):
 		# Check data
@@ -607,7 +610,7 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'account' must be Account type")
 		if account.id==None:
 			raise NotUpdatedElement(account, 'id')
-		
+
 		# Set data
 		data={'query_id': 17851374694183129, 'variables': '{"id": '+str(account.id)+', "first": '+str(count)+'}'}
 		if 'params' in settings:
@@ -616,14 +619,14 @@ class AgentAccount(Account, Agent):
 			settings['params']=data
 		followers_list=[]
 		stop=False
-		
+
 		while not stop:
 			# Request for get info
 			response=self.__send_get_request__(
 				"https://www.instagram.com/graphql/query/",
 				**settings,
 			)
-		
+
 			# Parsing info
 			try:
 				data=response.json()['data']['user']['edge_followed_by']
@@ -645,7 +648,7 @@ class AgentAccount(Account, Agent):
 			except (ValueError, KeyError):
 				raise UnexpectedResponse(response.url, response.text)
 		return followers_list
-	
+
 	@Agent.exceptionDecorator
 	def like(self, media, settings={}):
 		# Check data
@@ -655,12 +658,12 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'settings' must be dict type")
 		if media.id==None:
 			raise NotUpdatedElement(media, 'id')
-		
+
 		response=self.__action_handler__(
 			referer="https://www.instagram.com/p/{0}/".format(media.code),
 			url="https://www.instagram.com/web/likes/{0}/like/".format(media.id),
 		)
-		
+
 		# Parsing
 		try:
 			if response.json()['status']=='ok':
@@ -669,8 +672,8 @@ class AgentAccount(Account, Agent):
 				return False
 		except (ValueError, KeyError):
 			raise UnexpectedResponse(response.url, response.text)
-	
-	@Agent.exceptionDecorator	
+
+	@Agent.exceptionDecorator
 	def unlike(self, media, settings={}):
 		# Check data
 		if not isinstance(media, Media):
@@ -679,13 +682,13 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'settings' must be dict type")
 		if media.id==None:
 			raise NotUpdatedElement(media, 'id')
-		
+
 		# Request
 		response=self.__action_handler__(
 			referer="https://www.instagram.com/p/{0}/".format(media.code),
 			url="https://www.instagram.com/web/likes/{0}/unlike/".format(media.id),
 		)
-		
+
 		# Parsing
 		try:
 			if response.json()['status']=='ok':
@@ -694,7 +697,7 @@ class AgentAccount(Account, Agent):
 				return False
 		except (ValueError, KeyError):
 			raise UnexpectedResponse(response.url, response.text)
-	
+
 	@Agent.exceptionDecorator
 	def addComment(self, media, text, settings={}):
 		# Check data
@@ -706,14 +709,14 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'settings' must be dict type")
 		if media.id==None:
 			raise NotUpdatedElement(media, 'id')
-		
+
 		# Send request
 		response=self.__action_handler__(
 			referer="https://www.instagram.com/p/{0}/".format(media.code),
 			url="https://www.instagram.com/web/comments/{0}/add/".format(media.id),
 			data={'comment_text': text},
 		)
-		
+
 		# Parsing
 		try:
 			data=response.json()
@@ -741,13 +744,13 @@ class AgentAccount(Account, Agent):
 			raise NotUpdatedElement(comment, 'media')
 		if not comment.media.id==None:
 			raise NotUpdatedElement(comment.media, 'id')
-		
+
 		# Send request
 		response=self.__action_handler__(
 			referer="https://www.instagram.com/p/{0}/".format(comment.media.code),
 			url="https://www.instagram.com/web/comments/{0}/delete/{1}/".format(comment.media.id, comment.id),
 		)
-		
+
 		# Parsing
 		try:
 			if response.json()['status']=='ok':
@@ -767,13 +770,13 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'account' must be Account type")
 		if account.id==None:
 			raise NotUpdatedElement(account, 'id')
-			
+
 		# Send request
 		response=self.__action_handler__(
 			referer="https://www.instagram.com/{0}".format(account.login),
 			url="https://www.instagram.com/web/friendships/{0}/follow/".format(account.id),
 		)
-		
+
 		# Parsing
 		try:
 			if response.json()['status']=='ok':
@@ -782,7 +785,7 @@ class AgentAccount(Account, Agent):
 				return False
 		except (ValueError, KeyError):
 			raise UnexpectedResponse(response.url, response.text)
-	
+
 	@Agent.exceptionDecorator
 	def unfollow(self, account, settings={}):
 		# Check data
@@ -792,13 +795,13 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'account' must be Account type")
 		if account.id==None:
 			raise NotUpdatedElement(account, 'id')
-			
+
 		# Send request
 		response=self.__action_handler__(
 			referer="https://www.instagram.com/{0}".format(account.login),
 			url="https://www.instagram.com/web/friendships/{0}/unfollow/".format(account.id),
 		)
-		
+
 		# Parsing
 		try:
 			if response.json()['status']=='ok':
@@ -818,7 +821,7 @@ class AgentAccount(Account, Agent):
 			raise TypeError("'referer' must be str type")
 		if not isinstance(url, str):
 			raise TypeError("'url' must be str type")
-		
+
 		# Set data
 		headers={
 			'referer': referer,
@@ -834,15 +837,15 @@ class AgentAccount(Account, Agent):
 			settings['data'].update(data)
 		else:
 			settings['data']=data
-		
+
 		# Send request
 		response=self.__session__.post(url, **settings)
 		return response
-	
+
 class Media(metaclass=ElementConstructor):
 	__cache__={}
 	__primarykey__="code"
-	
+
 	def __init__(self, code):
 		self.id=None
 		self.code=str(code)
@@ -886,7 +889,7 @@ class Media(metaclass=ElementConstructor):
 class Location(metaclass=ElementConstructor):
 	__cache__={}
 	__primarykey__="id"
-	
+
 	def __init__(self, id):
 		self.id=str(id)
 		self.slug=None
@@ -898,7 +901,7 @@ class Location(metaclass=ElementConstructor):
 		# Lists
 		self.media=set()
 		self.top_posts=set()
-	
+
 	def __setDataFromJSON__(self, data):
 		data=data['location']
 		self.id=data['id']
@@ -915,14 +918,14 @@ class Location(metaclass=ElementConstructor):
 class Tag(metaclass=ElementConstructor):
 	__cache__={}
 	__primarykey__="name"
-	
+
 	def __init__(self, name):
 		self.name=str(name)
 		self.media_count=None
 		# Lists
 		self.media=set()
 		self.top_posts=set()
-	
+
 	def __setDataFromJSON__(self, data):
 		data=data['tag']
 		self.name=data['name']
@@ -933,7 +936,7 @@ class Tag(metaclass=ElementConstructor):
 class Comment(metaclass=ElementConstructor):
 	__cache__={}
 	__primarykey__="id"
-	
+
 	def __init__(self, id, media, owner, text, data):
 		self.id=str(id)
 		self.media=media
