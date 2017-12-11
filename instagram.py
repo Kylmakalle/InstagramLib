@@ -4,6 +4,11 @@ import requests
 from requests.exceptions import *
 from time import sleep
 
+try:
+    import ujson as json
+except ImportError:
+    import json
+
 
 # Exception classes
 class InstagramException(Exception):
@@ -165,6 +170,7 @@ class Agent:
     @exceptionDecorator
     def getMedia(self, obj, count=12, settings={}):
         # Checks data
+        MAX_MEDIA_COUNT = 500
         if not isinstance(settings, dict):
             raise TypeError("'settings' must be dict type")
         if not isinstance(count, int):
@@ -173,17 +179,20 @@ class Agent:
             if obj.id == None:
                 raise NotUpdatedElement(obj, 'id')
             data = {'query_id': 17888483320059182,
-                    'variables': '{"id": ' + str(obj.id) + ', "first": ' + str(count) + '}'}
+                    'variables': '{"id": ' + str(obj.id) + ', "first": ' + str(
+                        count if count <= MAX_MEDIA_COUNT else MAX_MEDIA_COUNT) + '}'}
         elif isinstance(obj, Location):
             if obj.id == None:
                 raise NotUpdatedElement(obj, 'id')
             data = {'query_id': 17865274345132052,
-                    'variables': '{"id": ' + str(obj.id) + ', "first": ' + str(count) + '}'}
+                    'variables': '{"id": ' + str(obj.id) + ', "first": ' + str(
+                        count if count <= MAX_MEDIA_COUNT else MAX_MEDIA_COUNT) + '}'}
         elif isinstance(obj, Tag):
             if obj.name == None:
                 raise NotUpdatedElement(obj, 'name')
             data = {'query_id': 17875800862117404,
-                    'variables': '{"tag_name": "' + obj.name + '", "first": ' + str(count) + '}'}
+                    'variables': '{"tag_name": "' + obj.name + '", "first": ' + str(
+                        count if count <= MAX_MEDIA_COUNT else MAX_MEDIA_COUNT) + '}'}
         else:
             raise TypeError("'obj' must be Account type")
 
@@ -197,11 +206,17 @@ class Agent:
 
         while not stop:
             # Send request
-            response = self.__send_get_request__(
-                "https://www.instagram.com/graphql/query/",
-                **settings,
-            )
-
+            try:
+                response = self.__send_get_request__(
+                    "https://www.instagram.com/graphql/query/",
+                    **settings,
+                )
+            except InternetException as e:
+                if '502' in str(e):
+                    json_params = json.loads(settings['params']['variables'])
+                    json_params['first'] = int(int(json_params['first']) / 2)
+                    settings['params']['variables'] = json.dumps(json_params)
+                continue
             # Parsing info
             try:
                 if isinstance(obj, Account):
@@ -233,18 +248,22 @@ class Agent:
                     m.dimensions = (media['node']['dimensions']['width'], media['node']['dimensions']['height'])
                     obj.media.add(m)
                     media_list.append(m)
+                print('Got posts', len(data['edges']))
                 if len(data['edges']) < count and data['page_info']['has_next_page']:
                     count = count - len(data['edges'])
                     if isinstance(obj, Tag):
                         settings['params']['variables'] = '{"tag_name": "' + obj.name + '", "first": ' + str(
-                            count) + ', "after": "' + data['page_info']['end_cursor'] + '"}'
+                            count if count <= MAX_MEDIA_COUNT else MAX_MEDIA_COUNT) + ', "after": "' + \
+                                                          data['page_info']['end_cursor'] + '"}'
                     else:
                         settings['params']['variables'] = '{"id": ' + str(obj.id) + ', "first": ' + str(
-                            count) + ', "after": "' + data['page_info']['end_cursor'] + '"}'
+                            count if count <= MAX_MEDIA_COUNT else MAX_MEDIA_COUNT) + ', "after": "' + \
+                                                          data['page_info']['end_cursor'] + '"}'
                 else:
                     stop = True
-            except (ValueError, KeyError):
-                raise UnexpectedResponse(response.url, response.text)
+            except (ValueError, KeyError) as e:
+                continue
+                # raise UnexpectedResponse(response.url, response.text)
         return media_list
 
     @exceptionDecorator
@@ -395,6 +414,7 @@ class Account(metaclass=ElementConstructor):
         self.is_private = None
         self.is_verified = None
         self.country_block = None
+        self.external_url = None
         # Lists
         self.media = set()
         self.follows = set()
@@ -414,6 +434,7 @@ class Account(metaclass=ElementConstructor):
         self.is_private = data['is_private']
         self.is_verified = data['is_verified']
         self.country_block = data['country_block']
+        self.external_url = data['external_url']
 
 
 class AgentAccount(Account, Agent):
@@ -421,10 +442,11 @@ class AgentAccount(Account, Agent):
     __session__ = requests.Session()
 
     @Agent.exceptionDecorator
-    def __init__(self, login, password, settings={}):
+    def __init__(self, login, password, settings={}, session=None):
         super().__init__(login)
         if not isinstance(settings, dict):
             raise TypeError("'settings' must be dict type")
+
         # Request for get start page for get CSRFToken
         response = self.__send_get_request__(
             "https://www.instagram.com/",
@@ -441,13 +463,13 @@ class AgentAccount(Account, Agent):
             "referer": "https://www.instagram.com/",
         }
         # Login request
+
         response = self.__send_post_request__(
             "https://www.instagram.com/accounts/login/ajax/",
             data=data,
             headers=headers,
             **settings,
         )
-
         # Parse response info
         try:
             data = response.json()
